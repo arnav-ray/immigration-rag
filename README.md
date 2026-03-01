@@ -261,7 +261,6 @@ fixed, what was learned — is in docs/.
 Honest documentation of failure is as important
 as documentation of success.
 
-[Read the learning journal →](./docs/Immigration_RAG_Learning_Journal.pdf)
 
 ---
 
