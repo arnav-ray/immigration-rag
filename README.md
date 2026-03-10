@@ -193,6 +193,28 @@ streamlit run app.py
 
 ---
 
+## Install as a Claude Skill
+
+This project ships with a Claude Skill that
+teaches Claude how to operate, troubleshoot,
+and extend the system.
+
+**Install in Claude Code:**
+1. Copy the `german-immigration-rag/` folder
+   to your Claude Code skills directory
+   (`~/.claude/skills/` on Mac/Linux)
+2. The skill loads automatically when you ask
+   about installing, running, or extending
+   the system
+
+**What the skill enables:**
+- Step-by-step setup and database build guide
+- Model configuration and switching
+- Retrieval quality troubleshooting
+- Instructions for extending the corpus
+
+---
+
 ## Known limitations
 
 - Citizenship and naturalisation require StAG —
@@ -261,7 +283,6 @@ fixed, what was learned — is in docs/.
 Honest documentation of failure is as important
 as documentation of success.
 
-
 ---
 
 ## Feedback and collaboration
@@ -275,7 +296,66 @@ an architectural improvement, or have thoughts
 on the document layer idea — please open an
 issue or get in touch directly.
 
-📧 arnavray@gmail.com
+---
+
+## Development process
+
+**System architecture and product decisions:**
+
+Arnav designed the core architecture and product
+strategy for this system:
+
+- Two-pass RAG pipeline (retrieve → rerank →
+  generate) — the key architectural decision
+  that separates answer quality from naive
+  single-pass retrieval
+- §-boundary chunking strategy — one § per
+  chunk, ensuring no legal condition is ever
+  split across retrieval nodes; designed the
+  regex patterns and overflow-split logic
+  to handle §§ exceeding token limits
+- § metadata priority system — retrieval
+  boosting for explicitly named §§, ensuring
+  direct queries bypass cosine similarity and
+  surface the right node first
+- Legal corpus scope — AufenthG, FreizügG/EU,
+  and BeschV selected with explicit rationale;
+  StAG and AsylG deliberately excluded and
+  disclosed to users
+- On-premise privacy architecture — GDPR,
+  data sovereignty, and professional liability
+  rationale defined before any code was written
+- Conversation memory design — 6-turn history
+  window balancing follow-up awareness against
+  context-length cost
+- Model evaluation and selection — tested
+  Mistral NeMo 12B vs Qwen 2.5 14B; defined
+  the trade-off criteria (VRAM vs reasoning
+  quality vs EU model provenance)
+
+**Testing and evaluation:**
+
+Intensive testing and evaluation conducted by
+Arnav, including:
+
+- Independent legal expert scoring (external
+  qualified reviewer, not self-assessed)
+- Per-query evaluation with documented scores
+  (8/10, 7.5/10) across four representative
+  query classes
+- A documented regression from 6/10 to 3.5/10,
+  full root cause analysis, and verified
+  recovery — included in the learning journal
+  as an honest record of failure
+- Iterative system prompt refinement across
+  multiple evaluation rounds until legal
+  accuracy stabilised
+
+**Code implementation:**
+
+Code generated with
+[Claude Code](https://claude.ai/claude-code),
+Anthropic's AI coding assistant.
 
 ---
 
