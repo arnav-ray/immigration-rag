@@ -1,221 +1,225 @@
 ---
 name: german-immigration-rag
-description: Guides setup, operation, troubleshooting, and extension of the German Immigration Law RAG system. Use when user asks how to install or run the immigration law assistant, build or rebuild the vector database, configure or swap Ollama models, troubleshoot timeout or GPU errors, fix poor retrieval quality, or add new laws to the corpus.
+description: Local RAG assistant for German immigration law (AufenthG, FreizügG/EU, BeschV). Use when user asks about German residence permits, visa types, Blue Card, Opportunity Card, skilled worker rules, EU free movement, family reunification, or tolerated stay — answers retrieved directly from indexed German legal text. Also use when a developer asks to set up, rebuild, test, or debug the local RAG system. Trigger phrases include: "Blue Card", "Blaue Karte", "Niederlassungserlaubnis", "Chancenkarte", "Familiennachzug", "AufenthG", "FreizügG", "residence permit", "skilled worker Germany", "rebuild index", "vector store".
+compatibility: Python 3.11+, LlamaIndex, Streamlit. Embeddings via HuggingFace (BAAI/bge-m3, auto-downloaded ~1.2 GB). Reranker via HuggingFace (BAAI/bge-reranker-v2-m3, auto-downloaded ~1.1 GB). LLM via Ollama — any model selectable in sidebar (qwen2.5:14b default). NVIDIA GPU strongly recommended.
 metadata:
-  author: Arnav
-  version: 1.0.0
+  author: Arnav Amal Ray
+  version: 2.0.0
+  category: legal-research
+  tags: [german-law, immigration, rag, aufenthg, llamaindex, bge-m3]
 ---
 
 # German Immigration Law RAG — Operator Guide
 
-An on-premise RAG pipeline answering questions about German immigration law
-(AufenthG, FreizügG/EU, BeschV) via Ollama. No cloud API. No data leaves
-the machine.
+A local Retrieval-Augmented Generation system over German immigration law,
+running entirely on-premise via Ollama. No data leaves the machine.
 
-For full architecture details, see `references/architecture.md`.
+**Corpus:**
+
+| Law | Applies to |
+|-----|-----------|
+| AufenthG (Aufenthaltsgesetz) | Third-country nationals — residence permits, visa, deportation |
+| FreizügG/EU | EU/EEA citizens and family — free movement rights |
+| BeschV (Beschäftigungsverordnung) | Employment permit approval — Federal Agency consent |
+
+**Disclaimer:** Educational learning project. Outputs are AI-generated and
+must not be taken as legal advice.
+
+For full architecture and pipeline details, see `references/architecture.md`.
+For authoritative EN↔DE legal term mapping, see `references/legal-terminology.md`.
 
 ---
 
-## Step 1: Prerequisites
+## Step 1: Classify the User Before Answering
 
-**Hardware**
-- NVIDIA GPU with 8 GB+ VRAM
-- Run on mains power — battery throttling causes GPU offloading and
-  request timeout errors
+Every immigration question must be routed to the correct legal regime:
 
-**Software**
-- Python 3.11+
-- [Ollama](https://ollama.ai) installed and running
+- EU/EEA citizen → **FreizügG/EU**
+- Non-EU national (third-country) → **AufenthG**
+- Employment permit approval question → **BeschV**
+- Mixed case (e.g. non-EU spouse of EU citizen) → state which law
+  governs each part explicitly before answering
 
-**Pull the required models:**
+Never mix AufenthG and FreizügG/EU rules in a single answer without
+explicit regime separation. See `references/legal-terminology.md`
+for the full regime routing table.
+
+---
+
+## Step 2: Translate English Terms to German Legal Terms
+
+English queries must be mentally translated before retrieval. See
+`references/legal-terminology.md` for the authoritative mapping.
+
+Critical translations:
+
+| English | German | § |
+|---------|--------|---|
+| Blue Card | Blaue Karte EU | § 18g AufenthG (NOT § 19a — outdated) |
+| Opportunity Card | Chancenkarte | § 20a AufenthG |
+| Settlement permit / Permanent residence | Niederlassungserlaubnis | § 9 AufenthG |
+| Temporary residence permit | Aufenthaltserlaubnis | § 7 AufenthG |
+| EU long-term residence | Erlaubnis zum Daueraufenthalt-EU | § 9a AufenthG |
+| Family reunification | Familiennachzug | § 27–36 AufenthG |
+| Skilled worker (degree) | Fachkraft mit akademischer Ausbildung | § 18b AufenthG |
+| Tolerated stay | Duldung | § 60a AufenthG |
+| Freedom of movement (EU) | Freizügigkeit | § 2 FreizügG/EU |
+
+The LLM query expansion pipeline attempts this translation automatically.
+If the wrong § is returned, name the § explicitly in your query.
+
+---
+
+## Step 3: Format Every Legal Answer Correctly
+
+1. **State §§ first** — list only §§ that appear in retrieved context.
+   Never cite §§ from memory.
+2. **Quote German text** — reproduce the exact German in quotation marks.
+3. **Explain in plain language** — immediately after the German quote.
+4. **Match query language** — German question → German answer.
+   English question → English answer.
+5. **Never state salary thresholds in EUR** — the § text uses percentages
+   of the Beitragsbemessungsgrenze, which changes annually.
+6. **End with disclaimer** — *"Please verify the source text in the panel
+   below before relying on this for any decision."*
+
+---
+
+## Setup: First-Time Installation
+
 ```bash
+# 1. Pull an LLM via Ollama
 ollama pull qwen2.5:14b
-ollama pull nomic-embed-text-v2-moe
-```
 
-**Install Python dependencies:**
-```bash
+# 2. Install Python dependencies
 pip install -r requirements.txt
-```
 
----
+# 3. Download legal corpus from gesetze-im-internet.de (HTML format)
+#    Place in data_input/, then run:
+python ingest_pdf.py
+# → produces structured Markdown files in data_output/
 
-## Step 2: Prepare the Legal Corpus
-
-1. Download the source HTML files from
-   [gesetze-im-internet.de](https://www.gesetze-im-internet.de):
-   - `AufenthG` (Aufenthaltsgesetz)
-   - `FreizügG/EU` (Freizügigkeitsgesetz)
-   - `BeschV` (Beschäftigungsverordnung)
-
-2. Place the downloaded HTML files in `data_input/`
-
-3. Run the ingestion script to convert to structured Markdown:
-   ```bash
-   python ingest_pdf.py
-   ```
-   Expected output: `.md` files in `data_output/`, one per law.
-
----
-
-## Step 3: Build the Vector Database
-
-```bash
+# 4. Build the vector index
 python build_db.py
+# → BAAI/bge-m3 (~1.2 GB) downloads automatically on first run
+# → index saved to data_vector_store/
+
+# 5. Launch the UI
+streamlit run app.py
+# → BAAI/bge-reranker-v2-m3 (~1.1 GB) downloads on first launch
+# → opens at http://localhost:8501
 ```
 
-Expected output:
-```
-1. Waking up the AI Models...
-2. Reading the structured Markdown files from 'data_output'...
-3. Splitting on § headers, filtering noise, tagging metadata...
-   Raw blocks : ~280
-   Filtered   : ~12  (preamble + ToC noise)
-   Overflow   : ~3   (extra sub-chunks from long §§)
-   Final nodes: ~268
-   AufenthG: 197 node(s)
-   BeschV: 48 node(s)
-   FreizügG/EU: 23 node(s)
-4. Building vector index...
-5. Saving Database to Hard Drive...
-Success! Database physically saved to: data_vector_store
-```
-
-If you see `Database already exists at data_vector_store. Ready for UI!`,
-the index was already built. Delete `data_vector_store/` to rebuild.
+**After any change to documents, embedding model, or chunking:**
+1. Delete `data_vector_store/` directory
+2. Re-run `python build_db.py`
 
 ---
 
-## Step 4: Run the Application
+## Developer Rebuild Checklist
 
-```bash
-streamlit run app.py
-```
+After any document or model change, verify with these three queries:
 
-The UI opens in your browser at `http://localhost:8501`.
+1. `"Was ist eine Niederlassungserlaubnis und welche Voraussetzungen gelten?"` — German, structural
+2. `"What is an Opportunity Card and who qualifies?"` — English, cross-lingual
+3. `"§ 18g AufenthG — Blaue Karte EU Voraussetzungen"` — § direct lookup
 
-**Example queries to test with:**
-- *Was ist die Blaue Karte EU und wer ist berechtigt?*
-- *What are the rules for a settlement permit for skilled workers?*
-- *Welche Voraussetzungen gelten für den Familiennachzug?*
+If any query returns a hallucinated § or an empty source panel,
+the rebuild is not complete.
 
 ---
 
 ## Examples
 
-### Scenario 1: First-time setup
-User: "How do I get this running from scratch?"
+### Example 1: EU Citizen Residence Rights
 
-Actions:
-1. Confirm GPU VRAM ≥ 8 GB and Ollama is installed
-2. Walk through Steps 1–4 in sequence
-3. Verify final node count matches expected values
-4. Run a test query to confirm retrieval
+User: *"Can I live in Germany as an EU citizen?"*
 
-Result: Working assistant citing §§ with source panel
+1. Classify: EU citizen → FreizügG/EU (not AufenthG)
+2. Retrieve: § 2 Abs. 2 FreizügG/EU
+3. Cover three phases:
+   - First 3 months: no conditions
+   - Beyond 3 months: must fall under § 2 Abs. 2 categories (worker, student, self-employed, self-sufficient)
+   - Permanent residence after 5 years: § 4a FreizügG/EU
+4. Answer in English
 
-### Scenario 2: Rebuilding the database after corpus update
-User: "I added a new law — how do I update the index?"
+### Example 2: Blue Card Requirements
 
-Actions:
-1. Place new `.md` file in `data_output/`
-2. Delete `data_vector_store/` directory
-3. Run `python build_db.py` again
-4. Confirm new law appears in the node count summary
+User: *"What are the Blue Card requirements?"*
 
-Result: Expanded corpus with new law indexed and retrievable
+1. Translate: "Blue Card" → `Blaue Karte EU` → § 18g AufenthG
+   *(not § 18a = vocational, not § 19a = outdated 2023 reform)*
+2. Retrieve chunks for § 18g
+3. Quote German text, explain in English
+4. Express salary threshold as % of Beitragsbemessungsgrenze — never EUR
 
-### Scenario 3: Switching the LLM
-User: "I want to try Mistral NeMo instead of Qwen."
+### Example 3: Non-EU Spouse of EU Citizen
 
-Actions:
-1. Run `ollama pull mistral-nemo:12b`
-2. In `app.py`, line 50: change `"qwen2.5:14b"` to `"mistral-nemo:12b"`
-3. Restart the Streamlit app
-4. Note: Mistral NeMo has weaker multi-condition reasoning but uses
-   less VRAM and is EU-jurisdiction by provenance
+User: *"My husband is French and I am Indian. Can I join him in Germany?"*
 
-Result: App running with alternative model, no other changes needed
+1. Classify: Non-EU spouse of EU citizen → FreizügG/EU § 3
+   *(direct family member — automatic derived right, not AufenthG)*
+2. Note: No prior cohabitation required for direct family members
+3. Retrieve: § 3 FreizügG/EU
+
+### Example 4: Cross-Lingual Retrieval
+
+User: *"What is a settlement permit?"*
+
+1. Translate: "settlement permit" → `Niederlassungserlaubnis` → § 9 AufenthG
+2. The LLM expansion pipeline generates these German terms automatically
+3. If wrong § is returned: name § 9 explicitly in the query
 
 ---
 
 ## Troubleshooting
 
-### Error: Request timeout / ollama connection refused
+**Wrong § retrieved for a known permit type:**
+- LLM expansion may have generated generic terms matching multiple §§
+- Fix: name the § explicitly, or add the specific conditions (salary,
+  qualification type, timeframe)
 
-**Cause:** Ollama is not running, or GPU is throttled (battery mode).
+**LLM answers in German for an English question:**
+- Language detection heuristic missed — query had no common English
+  function words
+- Fix: rephrase with words like "what", "how", "can", "does"
 
-**Solution:**
-1. Start Ollama: open the Ollama app or run `ollama serve`
-2. Plug in mains power and retry
-3. If still failing, increase timeout in `app.py` line 50:
-   `request_timeout=300.0` → `request_timeout=600.0`
+**RAG Insight shows all reranker scores near 0.0:**
+- Old English-only reranker may be loaded from HuggingFace cache
+- Fix: clear cache for `cross-encoder/ms-marco-MiniLM-L-6-v2`,
+  restart app — `bge-reranker-v2-m3` will re-download
 
-### Error: CUDA out of memory / model offloaded to CPU
+**`Database already exists` but results are stale:**
+- Old vector store built with a different embedding model
+- Fix: delete `data_vector_store/` directory, re-run `build_db.py`
 
-**Cause:** VRAM insufficient for the 14B model.
+**Ollama connection refused:**
+- Ollama server not running
+- Fix: run `ollama serve` in a separate terminal before starting the app
 
-**Solution:**
-- Switch to `mistral-nemo:12b` (requires ~8 GB VRAM vs ~9 GB for 14B)
-- Or reduce context window: in `app.py` line 50, change
-  `"num_ctx": 8192` to `"num_ctx": 4096`
+**Slow responses (over 60 seconds):**
+- LLM running on CPU instead of GPU
+- Fix: run `ollama ps` — should show GPU utilization. If CPU, check
+  CUDA drivers and run on mains power (battery throttles GPU).
 
-### Poor retrieval quality — wrong §§ returned
-
-**Cause:** Query phrasing does not match § content, or reranker is not
-filtering effectively.
-
-**Solution:**
-1. Try naming the § explicitly: "§ 18b requirements" instead of
-   "Blue Card requirements" — the § priority boost fires on explicit
-   references
-2. Check the "View Local Law Sources" expander — if the right § appears
-   in sources but the answer is wrong, the problem is generation not
-   retrieval (adjust the system prompt in `app.py`)
-3. If the right § is not in sources at all, the corpus may be missing
-   that law — check node counts from `build_db.py`
-
-### System answers "I don't have information on that"
-
-**Cause:** Query is about a law not in the corpus (StAG, AsylG, SGB).
-
-**Expected behaviour:** This is correct. The system is scoped to
-AufenthG, FreizügG/EU, and BeschV only. It is designed to acknowledge
-gaps rather than hallucinate.
-
-**If the law should be covered:** rebuild the corpus with the additional
-law (see Scenario 2 above).
-
-### `data_vector_store` exists but app crashes on load
-
-**Cause:** Index was built with a different embedding model than the one
-currently configured.
-
-**Solution:** Delete `data_vector_store/` and rebuild with
-`python build_db.py`. Embedding model must match between build and
-query time.
+**System says it has no information on a topic:**
+- Topic may be outside corpus scope (StAG, AsylG, SGB)
+- This is correct behaviour — the system is designed to acknowledge
+  gaps rather than hallucinate
 
 ---
 
-## Extending the Corpus
+## Critical Legal Accuracy Rules
 
-To add a new German law (e.g. StAG for citizenship):
-
-1. Download the HTML from gesetze-im-internet.de
-2. Place in `data_input/`
-3. Run `python ingest_pdf.py` — adds a new `.md` to `data_output/`
-4. Add a law tag in `build_db.py`, function `get_law_tag()`:
-   ```python
-   elif "stag" in name:
-       return "StAG"
-   ```
-5. Delete `data_vector_store/` and rebuild
-6. Update the system prompt in `app.py` to include the new law in the
-   list of covered statutes
-
-Note: The chunker splits on `## §` and `### §` headers. Verify the
-converted Markdown uses those heading levels for § sections before
-building the index.
-
-For architecture details and chunking logic, see
-`references/architecture.md`.
+- **Never cite a § not in the retrieved chunks.** A wrong § citation
+  is worse than admitting uncertainty.
+- **§ 18a is NOT the Blue Card.** § 18a = qualified professional
+  (vocational training). Blue Card = § 18g.
+- **§ 19a is outdated** — replaced by § 18g in the 2023
+  Fachkräfteeinwanderungsgesetz reform. Do not cite § 19a as current.
+- **§ 28 is not a standalone title** — it is a sub-category of
+  Aufenthaltserlaubnis for family members of German citizens.
+- **Erlaubnis zum Daueraufenthalt-EU (§ 9a) is for third-country
+  nationals only.** EU citizens use § 4a FreizügG/EU — a different law.
+- **Never state salary thresholds in EUR.** The § uses Beitragsbe-
+  messungsgrenze percentages, which change each year.

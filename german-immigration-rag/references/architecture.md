@@ -1,132 +1,278 @@
-# System Architecture Reference
+# System Architecture Reference — v2
 
 Detailed architecture notes for the German Immigration Law RAG system.
-Intended for contributors, auditors, and anyone extending the pipeline.
+For the pipeline summary, see the README. This document covers the
+technical reasoning behind each design decision.
 
 ---
 
-## Pipeline Overview
+## Pipeline at a Glance
 
 ```
-User query
-    ↓
-nomic-embed-text-v2-moe  (query embedding)
-    ↓
-VectorStoreIndex  — cosine similarity, k=20 candidates
-    ↓
-§ metadata priority  — explicitly named §§ sorted to top
-    ↓
-CrossEncoder (ms-marco-MiniLM-L-6-v2)  — rerank to top 5
-    ↓
-qwen2.5:14b  — generate answer from top-5 context
-    ↓
-Cited answer + source panel (Streamlit)
-```
+OFFLINE — run once (or after corpus change):
 
-The two-pass design (vector retrieve → cross-encoder rerank) is the
-core architectural decision. The cross-encoder sees the full query-chunk
-pair and scores true relevance, not embedding similarity. This catches
-§§ that are semantically adjacent to the query but not the actual answer,
-and promotes §§ that use different vocabulary than the query.
+  HTML from gesetze-im-internet.de
+      ↓ ingest_pdf.py (Docling)
+  Structured Markdown (one file per law)
+      ↓ build_db.py
+  § header split → noise filter → overflow split
+      ↓
+  bge-m3 embeds every chunk (1024-dim, multilingual)
+      ↓
+  VectorStoreIndex → data_vector_store/
+
+ONLINE — per user query:
+
+  User query
+      ↓ [1] Broad query detection (top_k = 35 vs 20)
+      ↓ [2] LLM query expansion → German legal terms
+      ↓ [3] Primary vector retrieval (bge-m3 cosine)
+      ↓ [4] XL_TERMS static expansion (secondary retrieval)
+      ↓ [5] Taxonomy dual-query (§ 4 anchor for broad questions)
+      ↓ [6] § priority boost (named §§ sorted to front)
+      ↓ [7] Cosine score capture (for RAG Insight display)
+      ↓ [8] Cross-encoder reranking (bge-reranker-v2-m3, top 5)
+      ↓ [9] Second retrieval pass (if best score < 0.1)
+      ↓ [10] LLM generation (top-5 chunks + conversation history)
+      ↓
+  Cited answer + source panel + RAG Insight panel
+```
 
 ---
 
 ## Chunking Strategy
 
-### Design principle
+### Core principle
 
 One § per chunk. A legal condition must never be split across two nodes.
-A retrieval failure that returns half a condition is worse than returning
-nothing — it produces confident-sounding but incomplete answers.
 
-### Implementation (`build_db.py`)
+**Why this is non-negotiable for legal text:**
 
-**Section detection regex:**
+A legal requirement often spans multiple Absätze within a single §.
+For example, § 18g (Blue Card) states the degree requirement in Abs. 1,
+the salary threshold in Abs. 2, and the exceptions in Abs. 3. If a
+chunk boundary falls between Abs. 1 and Abs. 2, the retriever may
+return only the salary clause without the degree requirement. The LLM
+then answers with half the conditions — producing a confidently stated
+but materially incomplete answer.
+
+The § header splitter guarantees every chunk is one complete § section,
+regardless of length.
+
+### Section detection regex
+
 ```python
 SECTION_HEADER_RE = re.compile(r'^#{2,4}\s+§\s*\d+', re.MULTILINE)
 ```
 
-Matches `## §`, `### §`, `#### §` — covers all three source laws, which
-use different heading depths for § sections.
+Matches `## §`, `### §`, `#### §` — covers all three source laws.
+AufenthG uses `### §`; FreizügG/EU and BeschV use `## §`. The pattern
+handles all depths without per-law configuration.
 
-**Splitting logic (`split_on_sections`):**
-1. Find all § header positions in the document
-2. Everything before the first § = preamble block
-3. Each block = text from one § header to the next
+### Overflow protection
 
-**Overflow protection (`overflow_split`):**
+Some §§ exceed 10,000 characters (~2,500 tokens). These are split at
+the nearest blank line after 8,000 characters.
 
-Some §§ (particularly §§ 4-10 in AufenthG) exceed 10,000 characters
-(~2,500 tokens). These are split at the nearest blank line after 8,000
-characters.
+```python
+OVERFLOW_CHARS = 10_000   # split trigger
+SPLIT_TARGET   =  8_000   # target split point
+```
 
-Sub-chunks are prefixed with `(continued) <original heading line>` so
-the heading context is preserved for metadata extraction:
+Sub-chunks are prefixed with `(continued) <original heading>` so the
+§ number is preserved for metadata extraction in every fragment:
+
 ```python
 remaining = f"(continued) {heading_line}\n\n" + remaining[cut:].lstrip()
 ```
 
-Constants:
-```python
-OVERFLOW_CHARS = 10_000   # trigger threshold
-SPLIT_TARGET   =  8_000   # target split point
-```
+Without this prefix, the `extract_section` function would fall back to
+scanning the chunk body for a § number, which works but is less reliable
+for §§ with dense body text.
 
-### Noise filtering (`is_noise_chunk`)
+### Noise filtering
 
-Two noise types discarded before indexing:
+Two block types discarded before embedding:
 
-1. **Preamble blocks** — law headers containing
-   `Ausfertigungsdatum`, `Vollzitat`, `BGBl.` together.
-   These are the document headers generated by Docling from the HTML,
-   not legal content.
+1. **Preamble blocks** — law headers containing `Ausfertigungsdatum`,
+   `Vollzitat`, and `BGBl.` together. These are generated by Docling
+   from the HTML header, not legal content.
 
 2. **Table-of-contents blocks** — blocks where `|` characters exceed
    5% of total length. The gesetze-im-internet.de HTML includes a full
-   ToC rendered as a Markdown table. Indexing ToC entries causes the
-   retriever to return § headings without body text.
+   ToC as a Markdown table. Indexing ToC entries causes the retriever
+   to return § headings without body text.
 
-### § metadata extraction (`extract_section`)
+### § metadata extraction — four-step fallback
 
-Four-step fallback chain per block:
-1. § number in the heading line (`§ 18b`)
-2. Cleaned heading text if no § number (`Einleitung`)
-3. § number anywhere in the block body
-4. `Vorbemerkung` (German term for unnumbered introductory content)
+```
+Step 1: § number in the heading line         → "§ 18g"
+Step 2: cleaned heading text (no § number)   → "Einleitung"
+Step 3: § number anywhere in the chunk body  → "§ 18g"
+Step 4: default                              → "Vorbemerkung"
+```
 
-The `section` metadata field is used by the § priority boost in
-`app.py` to surface explicitly named §§.
+The `section` field is used by the § priority boost at query time.
 
 ---
 
-## Retrieval
+## Embedding Model
 
-### Stage 1: Vector retrieval
+**BAAI/bge-m3** via HuggingFaceEmbedding
 
-- `k=20` candidates retrieved by cosine similarity
-- Embedding model: `nomic-embed-text-v2-moe` via Ollama
-- Same model used at build time and query time — mismatch causes
-  meaningless cosine scores
+- 1024-dimensional vectors
+- Multilingual — trained on 100+ languages including German
+- Query instruction: `"Represent this sentence for searching relevant passages: "`
+- Document instruction: `""` (empty — document text embedded as-is)
+- Auto-downloaded from HuggingFace on first run (~1.2 GB)
 
-### Stage 2: § priority boost
+**Why bge-m3 over nomic-embed-text:**
+
+The v1 system used `nomic-embed-text-v2-moe` (an Ollama-served model).
+It works but requires Ollama running during indexing, and its German
+performance is weaker. `bge-m3` is purpose-trained for multilingual
+retrieval, has a standard HuggingFace interface, and produces
+significantly better cosine scores for German legal term matching.
+
+**Critical:** embedding model must be identical between indexing time
+(`build_db.py`) and query time (`app.py`). A mismatch produces
+nonsense cosine scores — the index must be rebuilt if the model changes.
+
+---
+
+## Query-Time Pipeline — Stage by Stage
+
+### Stage 1: Broad query detection
 
 ```python
-explicit_sections = extract_explicit_sections(prompt)
-# regex: re.findall(r'§\s*(\d+[a-z]*)', query, re.IGNORECASE)
+BROAD_QUERY_TERMS = ["permit types", "types of", "what permits", ...]
+top_k = 35 if any(t in query.lower() for t in BROAD_QUERY_TERMS) else 20
 ```
 
-If the user names a § directly (e.g. "§ 18b"), chunks from that §
-are sorted to position 0 in the candidate list before the cross-encoder
-runs. This ensures the reranker always sees the directly-named § as a
-candidate even if cosine similarity ranked it lower than semantically
-similar §§.
+Broad taxonomy questions ("what types of permits exist in Germany?")
+need a wider candidate set — a standard top_k=20 retrieval returns
+only the chunks most similar to the query, which may all be from
+one permit type. top_k=35 gives the reranker a broader set to work with.
 
-### Stage 3: Cross-encoder rerank
+### Stage 2: LLM query expansion
 
-- Model: `cross-encoder/ms-marco-MiniLM-L-6-v2`
-- Scores all 20 query-chunk pairs, returns top 5 by relevance score
-- Runs locally — no API call, no data transmission
-- Context window for cross-encoder: 512 tokens
+The selected LLM generates the German legal terms, § numbers, and
+Absatz references most relevant to the query's specific conditions:
+
+```
+Input:  "What are the Blue Card requirements for a software engineer?"
+Output: "Blaue Karte EU § 18g AufenthG akademischer Abschluss
+         Gehaltsanforderung Beitragsbemessungsgrenze Zustimmung
+         Bundesagentur für Arbeit"
+```
+
+The expanded terms are prepended to the original query and used for
+the embedding retrieval. If expansion fails (timeout, model error), the
+system falls back to the original query.
+
+**Why expansion is necessary:**
+
+The legal corpus is in German. An English query ("Blue Card") does not
+match the German chunk text ("Blaue Karte EU") in cosine space — the
+embedding similarity is low even though the meaning is identical.
+Expansion bridges the vocabulary gap before retrieval.
+
+### Stage 3: Primary vector retrieval
+
+```python
+retriever = index.as_retriever(similarity_top_k=top_k)
+retrieved_nodes = retriever.retrieve(expanded_query)
+```
+
+bge-m3 embeds the expanded query and returns the top-k chunks by cosine
+similarity. These are the initial candidates for reranking.
+
+### Stage 4: XL_TERMS static expansion
+
+A dictionary of known English→German permit name pairs triggers a
+secondary retrieval pass for terms the LLM expansion may have missed.
+If any key appears in the original query, the German translation is used
+for an additional retrieval pass. Unique chunks are merged into the
+candidate set.
+
+**Why XL_TERMS alongside LLM expansion:**
+
+Some LLM models repeat the user's question in their expansion output
+instead of generating German terms. XL_TERMS is a deterministic fallback
+that fires correctly regardless of model behaviour.
+
+### Stage 5: Taxonomy dual-query
+
+For broad permit questions, a second German-language query targets
+§ 4 AufenthG (the formal exhaustive list of residence titles):
+
+```
+Secondary query: "§ 4 AufenthG Aufenthaltstitel Arten"
+```
+
+§ 4 is the anchor for all valid residence titles under AufenthG. Without
+this secondary query, a broad "what permits exist?" question may return
+chunks from specific §§ for one permit type, missing the taxonomy overview.
+
+### Stage 6: § priority boost
+
+```python
+explicit_sections = re.findall(r'§\s*(\d+[a-z]*)', query, re.IGNORECASE)
+if explicit_sections:
+    retrieved_nodes = sorted(retrieved_nodes, key=section_priority)
+```
+
+If the user explicitly names a § (e.g. "§ 18g requirements"), all chunks
+tagged with that § number are sorted to position 0 before reranking.
+This ensures the directly-named § is always present in the reranker's
+input, even if cosine similarity ranked it lower than semantically
+adjacent §§.
+
+### Stage 7: Cosine score capture
+
+All candidate scores are recorded before reranking for display in the
+RAG Insight panel. This lets users see: "cosine said chunk A was most
+similar, but cross-encoder ranked chunk B higher for actual relevance."
+
+### Stage 8: Cross-encoder reranking
+
+```python
+reranker = CrossEncoder("BAAI/bge-reranker-v2-m3", max_length=512)
+pairs = [[query, node.get_content()] for node in retrieved_nodes]
+scores = reranker.predict(pairs)  # 0–1 scale
+top_nodes = sorted_by_score[:5]
+```
+
+**BAAI/bge-reranker-v2-m3** — multilingual cross-encoder, 0–1 score range.
+
+The cross-encoder sees the full query-chunk pair and scores true query
+relevance, not embedding proximity. This catches:
+- Chunks that are semantically adjacent to the query but answer a
+  different question
+- Chunks that use different vocabulary but directly answer the query
+
+**Why multilingual reranker matters:**
+
+The v1 system used `cross-encoder/ms-marco-MiniLM-L-6-v2`, an
+English-only cross-encoder. This produced near-zero scores for German
+chunks regardless of relevance — the reranker was effectively random
+for this corpus. Switching to `bge-reranker-v2-m3` (multilingual,
+trained on German) produced an immediate step-change in answer quality.
+This was the root cause of the 6/10 → 3.5/10 regression when the
+reranker was temporarily replaced.
+
+### Stage 9: Second retrieval pass
+
+```python
+if max(reranker_scores) < 0.1:
+    # rerun retrieval with expanded terms only, top_k=10
+    # merge, re-rank
+```
+
+If the best reranker score in the candidate set is below 0.1, the initial
+retrieval set likely contains nothing relevant. A second pass with only
+the expanded terms (not the original query) often catches cases where
+the original query's phrasing mismatched the corpus vocabulary.
 
 ---
 
@@ -134,23 +280,19 @@ similar §§.
 
 ### Context assembly
 
-Top-5 reranked chunks concatenated with `---` separators and prepended
-to the user message:
+Top-5 reranked chunks concatenated with `---` separators:
 
 ```python
-context_str = "\n\n---\n\n".join([n.node.get_content() for n in top_nodes])
-user_message_content = f"Context from German law corpus:\n\n{context_str}\n\nQuestion: {prompt}"
+context_str = "\n\n---\n\n".join([n.get_content() for n in top_nodes])
+user_message = f"Context:\n\n{context_str}\n\nQuestion: {query}"
 ```
 
 ### Conversation memory
 
-Last 6 LLM turns (3 user + 3 assistant) injected as `ChatMessage` history
-before the current turn. This enables follow-up questions that reference
-prior answers without the user repeating context.
-
-The 6-turn window is a deliberate constraint — longer windows increase
-latency and can cause the model to weight older context over the current
-retrieved §§.
+Last 6 LLM turns (3 user + 3 assistant) injected as `ChatMessage`
+history before the current turn. The 6-turn window is deliberate —
+longer windows increase latency and can cause the model to weight
+prior context over the current retrieved §§.
 
 ### LLM configuration
 
@@ -160,78 +302,99 @@ Ollama(model="qwen2.5:14b", request_timeout=300.0,
 ```
 
 `num_ctx=8192` accommodates top-5 chunks (up to ~2,000 tokens each)
-plus the system prompt and conversation history within the context window.
+plus system prompt and conversation history within the context window.
+The earlier `num_ctx=4096` caused silent truncation — retrieved chunks
+were cut off mid-§, producing incomplete answers.
 
-### System prompt design
+### Language detection
 
-The system prompt (in `app.py`) instructs the model to:
-1. State which §§ it is drawing from before answering
-2. Quote the exact German legal text for each condition cited
-3. Explain in plain language after the German quote
-4. End every answer with a verification reminder
+A heuristic detects the query language and injects an explicit
+instruction into the user message content:
 
-This structure was developed through iterative legal expert evaluation.
-The production prompt (not included in this repo) was refined over
-multiple evaluation rounds to reach stable 7.5–8/10 scores.
+```
+"IMPORTANT: Answer in English" (if English detected)
+"IMPORTANT: Antworte auf Deutsch" (if German detected)
+```
 
----
-
-## Internet search fallback (Stage 2 — optional)
-
-When enabled via the UI toggle, a DuckDuckGo search runs after the
-local RAG answer. The search query is constructed by stripping stop words
-from the user query and appending "Germany immigration law".
-
-The web results are synthesised with the local answer in a second
-`llm.complete()` call. The synthesis prompt explicitly instructs the
-model to respond in the user's query language.
-
-This is a prototype feature. The local corpus answer is always generated
-first and is the primary answer; web results augment it.
+Without this injection, models with German training data default to
+German for legal content even when the question was asked in English.
 
 ---
 
-## Legal corpus
+## UI Architecture
 
-| Law | Applies to | Source | Nodes |
-|-----|-----------|--------|-------|
-| AufenthG | Non-EU nationals | gesetze-im-internet.de | ~197 |
-| FreizügG/EU | EU citizens + family | gesetze-im-internet.de | ~23 |
-| BeschV | Work permit approvals | gesetze-im-internet.de | ~48 |
+### RAG Insight panel
 
-**Not in corpus (by design):**
-- StAG — citizenship and naturalisation
-- AsylG — asylum law
-- SGB — social benefits
+Real-time display of:
+- Cosine similarity scores (blue bars) — all retrieved chunks
+- Reranker scores (green/red bars) — all retrieved chunks
+- USED / NOT USED markers — which chunks reached the LLM
 
-The system is instructed to acknowledge these gaps explicitly rather than
-answer from general training knowledge.
+This panel exposes the two-stage retrieval process for transparency
+and debugging. Users can see why a specific § was or was not included
+in the LLM context.
 
----
+### Compare mode
 
-## Model selection rationale
+Two LLMs run side by side on the same retrieved chunks. The retrieval
+pipeline runs once; both models generate from identical context. Useful
+for comparing answer quality between models without retrieval variance.
 
-| Model | VRAM | Reasoning | EU provenance | Notes |
-|-------|------|-----------|---------------|-------|
-| mistral-nemo:12b | ~8 GB | Good | Yes (Mistral AI, France) | First-line option if VRAM is limited or EU provenance is a priority |
-| qwen2.5:14b | ~9 GB | Better | No (Qwen, China) | Default; stronger on multi-condition legal queries and cross-§ synthesis |
+### Model selector
 
-The pipeline is model-agnostic. Swap the model name in `app.py` line 50.
-The embedding model (`nomic-embed-text-v2-moe`) does not change.
+Any Ollama model installed locally is available in the sidebar. Switch
+without restarting the app. The embedding model and reranker do not change.
 
 ---
 
-## Evaluation history
+## Performance Baseline (v2)
 
-Independent legal expert scoring (external qualified reviewer):
+| Metric | Value |
+|--------|-------|
+| Total chunks indexed | ~370 |
+| Chunks containing § reference | ~98% |
+| Embedding dimensions | 1024 (bge-m3) |
+| Reranker score range | 0–1 (bge-reranker-v2-m3) |
+| Retrieval k (standard) | 20 |
+| Retrieval k (broad queries) | 35 |
+| Top-k passed to LLM | 5 |
+| num_ctx (LLM) | 8,192 |
+| Legal expert evaluation scores | 7.5–8/10 |
 
-| Query | Score | Notes |
-|-------|-------|-------|
-| Blue Card salary requirement | 8/10 | Correct §, correct mechanism |
-| EU citizen rights in Germany | 7.5/10 | Three-phase structure correct |
-| Non-EU spouse of EU citizen | 8/10 | Correct regime, no invented requirements |
-| Non-EU spouse of German citizen | 7.5/10 | Correct §28/§31 routing |
+---
 
-A documented regression (6/10 → 3.5/10) occurred during development.
-Root cause, recovery steps, and lessons learned are in the learning
-journal at `docs/Immigration_RAG_Learning_Journal.pdf`.
+## Model Selection Rationale
+
+| Model | VRAM | Reasoning | Notes |
+|-------|------|-----------|-------|
+| mistral-nemo:12b | ~8 GB | Good | EU jurisdiction (Mistral AI, France); good starting point |
+| qwen2.5:14b | ~9 GB | Better | Stronger multi-condition queries; native tool calling |
+
+The pipeline is model-agnostic. Change the model name in the sidebar.
+The embedding model and reranker do not change with the LLM.
+
+---
+
+## Known Open Issues
+
+| Issue | Impact | Notes |
+|-------|--------|-------|
+| Long §§ split mid-Absatz | Medium | Overflow protection helps but doesn't fully solve |
+| No § metadata filtering | Medium | Cannot restrict retrieval to one law programmatically |
+| Web synthesis is stateless | Low | Conversation history not passed to web search call |
+| Source display truncates at 400 chars | Low | Triggering clause may be cut off |
+| LLM expansion may echo the query | Low | Some models repeat question instead of expanding it |
+
+---
+
+## Evolution from v1
+
+| Component | v1 | v2 |
+|-----------|----|----|
+| Embedding | nomic-embed-text-v2-moe (Ollama) | BAAI/bge-m3 (HuggingFace, 1024-dim) |
+| Reranker | ms-marco-MiniLM-L-6-v2 (English-only) | bge-reranker-v2-m3 (multilingual) |
+| Query expansion | None | LLM expansion + XL_TERMS static dict |
+| Retrieval passes | 1 | Up to 2 (second pass on low confidence) |
+| Cross-lingual | Poor | Working (English → German retrieval) |
+| UI | Basic chat | Compare mode, RAG Insight panel, model selector |
+| Evaluation | n/a | 7.5–8/10 independent legal expert scoring |
