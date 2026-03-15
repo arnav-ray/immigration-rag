@@ -1,175 +1,155 @@
-# German Immigration Law RAG
+# 🇩🇪 German Immigration Law RAG
 
-> ⚠️ **Learning project — built and documented
-> in public.** This is not a finished product.
-> It is an active learning exercise in AI
-> engineering, documented openly so others can
-> follow the same path. Expect rough edges.
-> Feedback welcome.
+> ⚠️ **Learning project — built and documented in public.**
+> Not a finished product. Active learning exercise in AI engineering,
+> shared openly so others can follow the same path.
+> Expect rough edges. Feedback welcome.
 
----
-
-An on-premise AI assistant for German immigration
-law — built for privacy, built for control, and
-built to explore what autonomous legal guidance
-could look like at the local hardware level.
+An on-premise AI assistant for German immigration law — built for
+privacy, built for control, and built to explore what autonomous legal
+guidance could look like at the local hardware level.
 
 ---
 
-## The problem this solves
+## ⚖️ The problem this solves
 
 German immigration law is genuinely complex.
-AufenthG alone runs to 650+ sections. FreizügG/EU
-adds a completely separate legal regime for EU
-citizens that is frequently confused with domestic
-law. BeschV governs work permit approvals with
-its own logic.
 
-For individuals navigating this system, the
-options are currently: pay for a lawyer
-(expensive), use official government portals
-(incomplete, fragmented across authorities),
-or search the internet (unverified, often
-outdated).
+AufenthG alone: 650+ sections. FreizügG/EU runs a completely separate
+legal regime for EU citizens that government portals routinely mix up
+with AufenthG. BeschV adds a third axis — employment permit approvals —
+that most people don't know exists until their application gets rejected.
 
-For organisations — HR departments, relocation
-consultancies, law firms — processing employee
-immigration queries against actual statute is
-manual, slow, and creates liability when wrong.
+The current options if you need an answer:
 
-This project demonstrates a different approach:
-an AI system that reads the actual law, cites
-the exact § it draws from, and runs entirely
-on your own hardware.
+| Option | Reality |
+|--------|---------|
+| Pay a lawyer | €200+/hour. Not accessible at scale. |
+| Government portals | Fragmented across 16 state authorities. Often 2+ years out of date. |
+| Internet search | Unverified. Forum posts. Migration consultants quoting § 19a (replaced in 2023). |
+| Generic ChatGPT | Confident. Occasionally cites §§ that don't exist. No way to verify. |
 
----
+**For HR departments and relocation consultancies**, the volume problem
+is real. Processing 50 employee immigration queries a month against
+actual statute, manually, creates liability when the answer is wrong.
 
-## Why on-premise matters
-
-Immigration queries contain sensitive personal
-data — nationality, family status, employment
-situation, residence history. Sending this to
-a cloud API raises immediate questions:
-
-- **GDPR compliance**: who processes the data,
-  under which legal basis, in which jurisdiction?
-- **Data sovereignty**: US cloud providers
-  operate under US law regardless of where
-  servers are physically located.
-- **Professional liability**: legal and HR
-  professionals cannot casually route client
-  data through third-party AI services.
-- **Cost at scale**: per-query API pricing
-  becomes significant at volume.
-
-This system runs entirely on a local GPU.
-Zero data leaves the machine. No API keys
-for core queries. No per-query costs. No
-terms-of-service exposure.
+This project tries something different: pull the law file, index it,
+answer from it, show the § it drew from. Let the user verify.
 
 ---
 
-## Why RAG — not just a chatbot?
+## 🔒 Why on-premise?
 
-A standard LLM has legal knowledge baked into
-its training weights. For a legal use case, this
-creates three specific failure modes:
+Immigration queries carry personal data that should never touch a cloud API.
 
-**1. Hallucinated § numbers.**
-LLMs confidently cite §§ that do not exist, or
-cite the right permit name with the wrong §.
-§ 19a was the Blue Card — it was replaced by
-§ 18g in the 2023 Fachkräfte­einwanderungs­gesetz
-reform. A model trained before 2023 cites the
-wrong §. When a user relies on a cited §, a
-wrong citation is worse than no answer.
+```
+What goes into a query:
+  - Nationality
+  - Family situation
+  - Employment status
+  - Residence history
+  - Salary details
 
-**2. Stale parametric memory.**
-German immigration law changes by statute. The
-2023 reform restructured the entire skilled
-worker chapter. An LLM trained before that reform
-describes the old architecture. A RAG system
-retrieves from the current statute file — rebuild
-the index when the law changes.
+What GDPR asks you to think about before routing that to a US cloud:
+  - Who is the data processor?
+  - Under which legal basis?
+  - In which jurisdiction?
+  - What are the retention terms?
+```
 
-**3. No verifiability.**
-A chatbot gives an answer. A RAG system shows
-the exact German text it drew from — the user
-reads the § themselves and decides whether to
-rely on the answer. For legal decisions,
-verifiability is not optional.
+**The short answer:** legal and HR professionals can't casually route
+client data through third-party AI services. And at volume, per-query
+API pricing gets expensive fast.
 
-**RAG solves all three:**
-- Every answer is grounded in retrieved §§,
-  not parametric memory — hallucination is
-  structurally harder
-- The index is rebuilt from the current statute
-  whenever the law changes
-- The source panel shows exact German § text —
-  the user can verify every factual claim
+This system runs entirely on a local GPU. Zero data leaves the machine.
+No API keys for core queries. No per-query costs. No terms-of-service
+exposure.
 
 ---
 
-## Why local models work for this
+## 🧠 Why RAG — not just a chatbot?
 
-**Mistral NeMo 12B** (tested, functional):
-- Built by Mistral AI — a French company,
-  EU jurisdiction, EU data governance norms.
-- 12B parameters fits in consumer GPU VRAM
-  (8GB+).
-- Strong multilingual capability via Tekken
-  tokeniser — handles German legal text well.
-- Good starting point if VRAM is limited or
-  EU model provenance is a priority.
+A standard LLM has legal knowledge baked into its weights from training.
+For a legal use case, that creates three specific failure modes:
 
-**Qwen 2.5 14B** (current default, recommended):
-- Stronger reasoning at comparable hardware
-  cost — better at multi-condition legal queries
-  and cross-§ synthesis.
-- Native tool calling support via Ollama —
-  essential for future agentic layers.
-- Slightly higher VRAM (~9GB) but fits on any
-  modern workstation GPU.
-- Better choice if reasoning quality matters
-  more than model provenance.
+```mermaid
+flowchart LR
+    subgraph bad ["❌ Plain LLM — what goes wrong"]
+        direction TB
+        b1["User asks:\nBlue Card salary?"] --> b2["LLM draws\nfrom training memory"]
+        b2 --> b3a["Cites § 19a\n— replaced 2023 —"]
+        b2 --> b3b["Pre-reform knowledge\nbaked into weights"]
+        b2 --> b3c["No source text\nshown to user"]
+        b3a --> b4["🔴 Wrong § · Stale · Unverifiable"]
+        b3b --> b4
+        b3c --> b4
+    end
 
-Both run via [Ollama](https://ollama.ai) with
-no configuration beyond a single pull command.
-The pipeline is model-agnostic — swap the LLM
-name without changing anything else.
+    subgraph good ["✅ This RAG System — what changes"]
+        direction TB
+        g1["Same question"] --> g2["Retrieve § 18g\nfrom current statute file"]
+        g2 --> g3a["Correct § returned\nbge-reranker confirms"]
+        g2 --> g3b["Rebuild index when\nlaw changes → always current"]
+        g2 --> g3c["Source panel shows\nexact German § text"]
+        g3a --> g4["🟢 Correct · Current · Verifiable"]
+        g3b --> g4
+        g3c --> g4
+    end
+```
+
+**The three failure modes, concretely:**
+
+- **Hallucinated §§.** § 19a was the Blue Card. The 2023
+  Fachkräfteeinwanderungsgesetz replaced it with § 18g. An LLM trained
+  before 2023 cites the old §. A wrong § citation in an immigration
+  query isn't an inconvenience — it's potentially a rejected application.
+
+- **Stale parametric memory.** German immigration law changes by statute.
+  The 2023 reform restructured the entire skilled worker chapter.
+  RAG retrieves from the actual file. Rebuild the index when the law changes.
+
+- **No verifiability.** A chatbot gives you an answer. RAG shows you
+  the German text it drew from. For legal decisions, the user needs to
+  read the § themselves. That's not optional.
 
 ---
 
-## What it does today
+## 💻 Why local models work for this
 
-Ask questions in English or German. The system
-retrieves the relevant §§ from statute, quotes
-the exact German legal text, and explains in
-plain language. Every answer cites the §§ it
-drew from. Users can verify the source text
-directly in the interface.
+The pipeline is model-agnostic. Any Ollama model works. Three that have
+been tested:
 
-**Key features (v2 system):**
-- Cross-lingual retrieval — ask in English,
-  retrieve from German legal text. LLM query
-  expansion translates English concepts to
-  German legal terms before embedding.
-- § priority boost — name a § explicitly and
-  it surfaces first regardless of cosine score.
-- Multilingual reranking — cross-encoder scores
-  query-chunk relevance in German; top 5 go
-  to the LLM.
-- RAG Insight panel — real-time cosine
-  similarity and reranker scores for every
-  retrieved chunk, with USED/NOT USED markers.
-- Model selector — any Ollama model selectable
-  in the sidebar without restarting.
-- Compare mode — run two models side by side
-  on the same retrieved chunks for benchmarking.
-- Conversation memory — last 6 turns retained
-  for follow-up questions.
+| Model | VRAM | Reasoning | Notes |
+|-------|------|-----------|-------|
+| **gpt-oss:20b** ⭐ | ~12 GB | Best tested | Current recommended default — strongest legal reasoning on this corpus |
+| qwen2.5:14b | ~9 GB | Strong | Good second choice; native tool calling |
+| mistral-nemo:12b | ~8 GB | Good | EU model provenance (Mistral AI, France); lower VRAM |
 
-**Independent legal evaluation results:**
+Switch models in the sidebar without restarting. The embedding model
+and reranker are independent of the LLM — those don't change.
+
+---
+
+## ✅ What it does today
+
+Ask in English or German. Get the § back, with the German legal text
+quoted, and an explanation in the language you asked in.
+
+**Current features:**
+
+- **Cross-lingual retrieval** — ask in English, retrieve from German
+  legal text. The pipeline translates before embedding.
+- **§ priority boost** — name a § explicitly and it surfaces first,
+  regardless of cosine score.
+- **RAG Insight panel** — real-time cosine and reranker scores for
+  every retrieved chunk, with USED/NOT USED markers. You can see exactly
+  why a § was or wasn't included.
+- **Compare mode** — two models side by side on identical retrieved
+  chunks. No retrieval variance — pure answer quality comparison.
+- **Model selector** — any Ollama model in the sidebar, no restart.
+- **Conversation memory** — last 6 turns retained for follow-ups.
+
+**Independent legal evaluation (external qualified reviewer):**
 
 | Query | Score | Notes |
 |-------|-------|-------|
@@ -177,11 +157,6 @@ directly in the interface.
 | EU citizen rights in Germany | 7.5/10 | Three-phase structure correct |
 | Non-EU spouse of EU citizen | 8/10 | Correct regime, no invented requirements |
 | Non-EU spouse of German citizen | 7.5/10 | Correct §28/§31 routing |
-
-Scores from an external qualified legal expert.
-Full evaluation history — including a documented
-regression from 6/10 to 3.5/10 and its root
-cause — in the learning journal.
 
 **Legal corpus:**
 
@@ -193,393 +168,325 @@ cause — in the learning journal.
 
 ---
 
-## Technical architecture — how a query flows
+## 🏗️ How a query actually flows — all 9 stages
 
-### Stage 0: Document preparation (offline)
+### Stage 0: Building the index (run once)
 
 ```
 gesetze-im-internet.de HTML
-    ↓
-ingest_pdf.py (Docling)
-    ↓
+        │
+        ▼  ingest_pdf.py (Docling)
 Structured Markdown — one file per law
-    ↓
-build_db.py
-    ↓
-  § header regex splits text at every § boundary
-  → preamble + ToC blocks filtered out
-  → § blocks exceeding 10,000 chars split at
-    nearest blank line (heading preserved in
-    sub-chunks for metadata continuity)
-  → each chunk tagged: law + § number metadata
-    ↓
-bge-m3 embeds every chunk (1024-dim, multilingual)
-    ↓
-VectorStoreIndex saved to data_vector_store/
+        │
+        ▼  build_db.py
+  ┌─────────────────────────────────────────┐
+  │  § header regex splits at every §       │
+  │  → preamble + ToC blocks filtered       │
+  │  → §§ over 10,000 chars split at        │
+  │    nearest blank line (heading kept)    │
+  │  → each chunk tagged: law + § number    │
+  └─────────────────────────────────────────┘
+        │
+        ▼  bge-m3 (1024-dim, multilingual)
+Embeddings saved → data_vector_store/
 ```
 
-### Stage 1–9: Query time (per user message)
+### Stages 1–9: Every query, in real time
 
+```mermaid
+flowchart TD
+    IN(["🗣️ User query\nEnglish or German"])
+
+    IN --> S1["1 · Broad detection
+    ──────────────────
+    Taxonomy question?
+    top_k = 35  ·  else  top_k = 20"]
+
+    S1 --> S2["2 · LLM query expansion
+    ──────────────────
+    'Blue Card' →
+    'Blaue Karte EU § 18g AufenthG
+    akademischer Abschluss
+    Gehaltsanforderung BBG'"]
+
+    S2 --> S3["3 · Primary vector retrieval
+    ──────────────────
+    bge-m3 embeds expanded query
+    Cosine similarity · top-k chunks
+    from 370 indexed §§"]
+
+    S3 --> S45["4 · XL_TERMS expansion  +  5 · Taxonomy dual-query
+    ──────────────────────────────────────────────
+    4: deterministic EN→DE dict fires secondary retrieval
+       catches model-echo failure in expansion
+    5: broad questions anchor § 4 AufenthG
+       the exhaustive list of residence titles"]
+
+    S45 --> S6["6 · § priority boost
+    ──────────────────
+    User explicitly named a §?
+    Sort those chunks to position 0
+    before reranking"]
+
+    S6 --> S7["7 · Cosine score capture
+    ──────────────────
+    All candidate scores recorded
+    Powers the RAG Insight panel"]
+
+    S7 --> S8{"8 · Cross-encoder reranking
+    ──────────────────
+    bge-reranker-v2-m3
+    Scores every query × chunk pair
+    0–1 scale · multilingual
+    Top 5 selected"}
+
+    S8 -->|"best score ≥ 0.1\ngood candidate set"| S10
+    S8 -->|"best score < 0.1\nnothing relevant found"| S9
+
+    S9["9 · Second retrieval pass
+    ──────────────────
+    Rerun with expanded terms only
+    top_k = 10 · merge · re-rank
+    Last resort before generating"]
+
+    S9 --> S10["10 · Generate
+    ──────────────────
+    gpt-oss:20b via Ollama
+    Top-5 chunks as context
+    6-turn conversation history
+    System prompt: cite § · quote German · explain"]
+
+    S10 --> OUT(["✅ Cited answer
+    Source panel  ·  RAG Insight"])
 ```
-User query (English or German)
-    ↓
-[Stage 1] Broad query detection
-  → taxonomy questions (e.g. "what permits exist?")
-    get top_k=35; others get top_k=20
 
-[Stage 2] LLM query expansion
-  → LLM generates the German legal terms, §
-    numbers, and Absatz references most relevant
-    to the query's actual conditions
-  → expanded terms prepended to embedding query
-  → falls back to original query on error
+**Why does each stage exist?**
 
-[Stage 3] Primary vector retrieval
-  → bge-m3 embeds the expanded query
-  → cosine similarity against all chunks,
-    top-k candidates returned
-
-[Stage 4] Static term expansion (XL_TERMS)
-  → known English→German permit name pairs
-    trigger a secondary retrieval pass
-  → unique additional chunks merged into
-    the candidate set
-
-[Stage 5] Taxonomy dual-query
-  → for broad permit questions, a second
-    German-language query anchors § 4 AufenthG
-    (the formal list of residence titles)
-  → prevents broad questions returning only
-    one permit type
-
-[Stage 6] § priority boost
-  → if user explicitly named a § (e.g. "§ 18g"),
-    all chunks from that § are sorted to position
-    0 in the candidate list before reranking
-  → ensures the directly-named § is always
-    in the reranker's input
-
-[Stage 7] Cosine score capture
-  → all candidate similarity scores recorded
-    for display in the RAG Insight panel
-
-[Stage 8] Multilingual cross-encoder reranking
-  → bge-reranker-v2-m3 scores every
-    query-chunk pair (0–1 scale, multilingual)
-  → top 5 by reranker score passed to LLM
-  → reranker scores also displayed in
-    RAG Insight panel
-
-[Stage 9] Second retrieval pass (if needed)
-  → if best reranker score < 0.1, retrieval
-    reruns using only the expanded terms
-    (top_k=10), merges results, re-ranks
-  → prevents generating from irrelevant context
-    ↓
-[Stage 10] LLM generation
-  → system prompt: cite §§, quote German text,
-    explain in plain language, match query language
-  → last 6 conversation turns injected for
-    follow-up awareness
-  → answer generated from top-5 reranked chunks
-    ↓
-Cited answer + source panel + RAG Insight panel
-```
-
-**Why each stage exists:**
-
-| Stage | Why it matters |
-|-------|---------------|
-| LLM expansion | English queries don't match German legal vocabulary — cosine fails without translation |
-| Static XL_TERMS | LLM expansion misses permit names if model echoes the question instead of expanding it |
-| Taxonomy dual-query | Broad "what permits exist?" questions otherwise return a single permit type |
-| § priority boost | Named § queries deserve exact match priority over cosine proximity |
-| Cross-encoder reranking | Cosine measures embedding proximity; cross-encoder measures actual query-answer relevance |
-| Second retrieval pass | Catches failure mode where initial retrieval set contains nothing relevant |
-
-**Chunking decision — one § per chunk:**
-
-Legal conditions are often split across multiple
-Absätze within a single §. If a chunk boundary
-falls mid-§, the retriever may return the second
-half of a condition without the first half, and
-the LLM answers from incomplete context. The §
-header splitter ensures every chunk is one
-complete legal section. Overflow protection
-handles §§ that exceed the token limit: they
-are split at the nearest blank line, with the
-heading line preserved in every sub-chunk so
-metadata extraction still fires correctly.
+| Stage | The problem it solves |
+|-------|-----------------------|
+| 1 · Broad detection | "What permits exist?" needs more candidates — top_k=20 returns one permit type |
+| 2 · LLM expansion | English "Blue Card" doesn't cosine-match German "Blaue Karte EU" — vocabulary gap |
+| 3 · Vector retrieval | Fast approximate nearest-neighbour — gets candidate set |
+| 4 · XL_TERMS | Some models echo the question instead of expanding — deterministic fallback |
+| 5 · Taxonomy anchor | Without it, broad questions return chunks from one § only |
+| 6 · § boost | Named § should always be in the reranker's input, regardless of cosine rank |
+| 7 · Score capture | Transparency — show the user what cosine thought vs what reranker thought |
+| 8 · Cross-encoder | Cosine = embedding proximity. Cross-encoder = actual query-answer relevance. Different. |
+| 9 · Second pass | If nothing scored above 0.1, the candidate set was probably wrong — retry |
 
 ---
 
-## How to run
+## 🚀 How to run
 
-**Requirements:** NVIDIA GPU 8GB+ VRAM,
-[Ollama](https://ollama.ai), Python 3.11+.
-Run on mains power — battery throttling causes
-GPU offloading and timeout errors.
+**Requirements:** NVIDIA GPU 8GB+ VRAM, [Ollama](https://ollama.ai), Python 3.11+.
+Run on mains power — battery throttling causes GPU offloading and timeout errors.
 
 ```bash
-# Pull an LLM
-ollama pull qwen2.5:14b
+# Pull recommended LLM
+ollama pull gpt-oss:20b
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Download AufenthG, FreizügG/EU, BeschV from
-# gesetze-im-internet.de as HTML
-# Convert with Docling, place .md in data_output/
+# Download AufenthG, FreizügG/EU, BeschV from gesetze-im-internet.de as HTML
+# Run ingest_pdf.py to convert → .md files in data_output/
 
 # Build vector index
+# BAAI/bge-m3 (~1.2 GB) downloads automatically on first run
 python build_db.py
 
-# Run
+# Launch
+# BAAI/bge-reranker-v2-m3 (~1.1 GB) downloads on first app start
 streamlit run app.py
+# → http://localhost:8501
 ```
 
-The embedding model (`BAAI/bge-m3`, ~1.2 GB)
-and reranker (`BAAI/bge-reranker-v2-m3`, ~1.1 GB)
-download automatically from HuggingFace on first
-run. No manual setup required.
-
 ---
 
-## Install as a Claude Skill
+## 🔌 Install as a Claude Skill
 
-This project ships with a Claude Skill that
-teaches Claude how to operate, troubleshoot,
-and extend the system.
+The `german-immigration-rag/` folder is a Claude Skill — it teaches
+Claude how to operate, troubleshoot, and extend the system.
 
 **Install in Claude Code:**
-1. Copy the `german-immigration-rag/` folder
-   to your Claude Code skills directory
-   (`~/.claude/skills/` on Mac/Linux)
-2. The skill loads automatically when you ask
-   about installing, running, or extending
-   the system
+1. Copy `german-immigration-rag/` to `~/.claude/skills/`
+2. The skill loads automatically when you ask about setup, rebuilding,
+   or debugging
 
-**What the skill enables:**
-- Step-by-step setup and database build guide
-- Model configuration and switching
-- Retrieval quality troubleshooting
-- Instructions for extending the corpus
+Includes: full setup guide · troubleshooting · legal accuracy rules ·
+EN↔DE terminology mapping
 
 ---
 
-## Known limitations
+## ⚠️ Known limitations
 
-- Chunking can split very long §§ across nodes
-  when a single § runs to 15,000+ characters —
-  the retriever may return the second half of
-  a condition without the first. Mitigation:
-  overflow split preserves heading context.
-- Citizenship and naturalisation require StAG —
-  not in corpus. System states this explicitly
-  when asked.
-- Asylum law (AsylG) and social benefits (SGB)
-  are out of scope.
-- The system prompt in this repository is a
-  functional stub. The full production prompt
-  was developed through iterative legal
-  evaluation and is not included here.
-- Web search synthesis (optional feature) is
-  stateless — conversation history is not
-  passed to the web synthesis call.
-- Run on mains power. Battery throttling causes
-  GPU offloading and request timeout errors.
+- Long §§ can split across nodes when a single § runs to 15,000+ chars.
+  The overflow split preserves the heading but Absatz continuity isn't
+  guaranteed.
+- No § metadata filtering — can't tell the retriever "only search
+  FreizügG/EU". Everything goes into one index.
+- Web search synthesis (optional) is stateless — conversation history
+  isn't passed to the synthesis call.
+- StAG (citizenship), AsylG (asylum), SGB (social benefits) — out of
+  scope. The system says so when asked.
+- Run on mains power. Battery throttling causes GPU offloading and
+  request timeouts.
 
 ---
 
-## How the architecture evolved
+## 📈 How the architecture got here — v1 vs v2
 
-This is a learning project and the architecture
-has changed substantially through iteration:
+The regression from 6/10 to 3.5/10 had one root cause: the reranker
+was English-only. It scored German chunks near 0.0 regardless of
+relevance. The reranker was effectively random. Switching it was the
+single biggest improvement in the project.
 
-**v1 (public code baseline):**
-- Single-pass retrieval — vector search → LLM
-- English-only reranker (ms-marco-MiniLM-L-6-v2)
-- Ollama embedding model (nomic-embed-text-v2-moe)
-- No query expansion — English query embedded as-is
-- Result: good English queries, poor cross-lingual
+```mermaid
+flowchart LR
+    subgraph v1 ["v1 — what broke"]
+        direction TB
+        v1a["English query"] --> v1b["nomic-embed-text\nOllama"]
+        v1b --> v1c["Cosine retrieval\ntop-k = 20"]
+        v1c --> v1d["ms-marco-MiniLM\n— English only —"]
+        v1d --> v1e["German chunks\nscore ≈ 0.0"]
+        v1e --> v1f["Reranker effectively\nrandom for this corpus"]
+        v1f --> v1g["📉 3.5 / 10"]
+    end
 
-**v2 (current development):**
-- LLM query expansion before embedding
-- Static XL_TERMS dictionary as fallback expansion
-- Upgraded to multilingual bge-m3 embeddings
-  (1024-dim) and bge-reranker-v2-m3 cross-encoder
-- Taxonomy dual-query for broad questions
-- Second retrieval pass when reranker confidence
-  is below threshold
-- RAG Insight panel, compare mode, model selector
-- Result: stable 7.5–8/10 on independent legal
-  expert evaluation; cross-lingual queries working
+    subgraph v2 ["v2 — what fixed it"]
+        direction TB
+        v2a["English query"] --> v2b["LLM expansion\n→ German legal terms"]
+        v2b --> v2c["bge-m3\n1024-dim · multilingual"]
+        v2c --> v2d["Cosine retrieval\ntop-k = 20 / 35"]
+        v2d --> v2e["bge-reranker-v2-m3\n— multilingual —"]
+        v2e --> v2f["Real relevance scores\nin German"]
+        v2f --> v2g["📈 7.5–8 / 10"]
+    end
 
-The regression (6/10 → 3.5/10) happened during
-the v1→v2 migration when the reranker was
-temporarily swapped to an English-only model.
-Full root cause and recovery documented in the
-learning journal.
+    v1 -->|"one reranker swap\n+ query expansion"| v2
+```
+
+**Full evolution table:**
+
+| Component | v1 | v2 |
+|-----------|----|----|
+| Embedding | nomic-embed-text (Ollama) | BAAI/bge-m3 (HuggingFace, 1024-dim) |
+| Reranker | ms-marco-MiniLM — English only | bge-reranker-v2-m3 — multilingual |
+| Query expansion | None — English embedded as-is | LLM expansion + XL_TERMS dict fallback |
+| Retrieval passes | 1 | Up to 2 (second pass on low confidence) |
+| Cross-lingual | ❌ Broken | ✅ Working |
+| UI | Basic chat | Compare mode + RAG Insight panel + model selector |
+| Legal evaluation | — | 7.5–8/10 independent expert scoring |
 
 ---
 
-## Ideas for where this could go
+## 💡 Ideas for where this could go
 
-*These are early-stage ideas, not commitments.
-Sharing them because the architecture is
-interesting and feedback is welcome.*
+*Early-stage. Not commitments. Sharing because the architecture is
+worth discussing even if the implementation is uncertain.*
 
 **User document layer:**
 
-A second RAG that reads the user's own documents
-— employment contract, passport, qualification
-certificates, rental agreement — and extracts
-the facts of their specific situation. Combined
-with the immigration law brain, an orchestration
-agent could:
+A second RAG over the user's own documents — employment contract,
+passport, qualifications, rental agreement. An orchestration agent
+could then:
 
-1. Read the user's documents and extract their
-   profile (nationality, employment status,
-   family situation, current residence status)
-2. Identify which immigration requirements apply
-   to their specific situation
-3. Cross-reference what they have against what
-   is required — identify gaps and risks
-4. Produce structured output: what you have,
-   what you need, what the risks are, what to
-   do next
+1. Extract the user's profile from their documents
+2. Match it against the immigration requirements that apply
+3. Cross-reference what they have vs what's required
+4. Output: what you have · what you need · what the risks are
 
-This would mirror what an immigration consultant
-does in an initial assessment — read your
-documents, know the law, tell you where you
-stand. Entirely on-premise.
+This is what an immigration consultant does in an initial assessment.
+Entirely on-premise. The user's documents never leave their machine.
 
-**Remaining known improvements to build:**
+**Remaining architectural improvements:**
 
-- §-level metadata filtering — query only
-  FreizügG/EU without AufenthG chunks appearing
-- Persist conversation history to a local file
-  across browser sessions
-- Extend source panel beyond 400-character
-  truncation limit
-- Strip LLM expansion echo (some models repeat
-  the question instead of expanding it)
+- §-level metadata filtering (query only FreizügG/EU, exclude AufenthG)
+- Persist conversation history across browser sessions
+- Strip LLM expansion echo (some models repeat the question)
+- Source panel beyond 400-character truncation
 
 ---
 
-## Learning journal
+## 📓 Learning journal
 
-This was built by someone with no prior AI
-engineering background, learning in public.
-The full write-up — every decision made, what
-broke, the 3.5/10 regression and how it was
-fixed, what was learned — is in docs/.
+Built by someone with no prior AI engineering background, learning in
+public. The full write-up covers every decision made, what broke,
+the 3.5/10 regression and how it was fixed, and what was learned.
 
-Honest documentation of failure is as important
-as documentation of success.
+Honest documentation of failure is as important as documentation of success.
 
 [Read the learning journal →](./docs/Immigration_RAG_Learning_Journal.pdf)
 
 ---
 
-## Feedback and collaboration
+## 💬 Feedback and collaboration
 
-Comments, corrections, and ideas are genuinely
-welcome — whether you are working in immigration
-law, HR, legal tech, or AI engineering.
+Comments, corrections, and ideas are genuinely welcome — whether you are
+working in immigration law, HR, legal tech, or AI engineering.
 
-If you spot a legal error, a retrieval failure,
-an architectural improvement, or have thoughts
-on the document layer idea — please open an
-issue or get in touch directly.
+Spot a legal error, a retrieval failure, an architectural improvement,
+or have thoughts on the document layer idea — open an issue or get in
+touch.
 
 📧 arnavray@gmail.com
 
 ---
 
-## Development process
+## 🛠️ Development process
 
 **System architecture and product decisions:**
 
-Arnav designed the core architecture and product
-strategy for this system:
+Arnav designed the core architecture and product strategy:
 
-- Two-pass RAG pipeline (retrieve → rerank →
-  generate) — the key architectural decision
-  that separates answer quality from naive
+- Two-pass RAG pipeline (retrieve → rerank → generate) — the key
+  architectural decision that separates answer quality from naive
   single-pass retrieval
-- §-boundary chunking strategy — one § per
-  chunk, ensuring no legal condition is ever
-  split across retrieval nodes; designed the
-  regex patterns and overflow-split logic
-  to handle §§ exceeding token limits
-- § metadata priority system — retrieval
-  boosting for explicitly named §§, ensuring
-  direct queries bypass cosine similarity and
-  surface the right node first
-- LLM query expansion design — English queries
-  translated to German legal terms before
-  embedding; fallback chain for expansion failure
-- Legal corpus scope — AufenthG, FreizügG/EU,
-  and BeschV selected with explicit rationale;
-  StAG and AsylG deliberately excluded and
-  disclosed to users
-- On-premise privacy architecture — GDPR,
-  data sovereignty, and professional liability
-  rationale defined before any code was written
-- Conversation memory design — 6-turn history
-  window balancing follow-up awareness against
-  context-length cost
-- Model evaluation and selection — tested
-  Mistral NeMo 12B vs Qwen 2.5 14B; defined
-  the trade-off criteria (VRAM vs reasoning
-  quality vs EU model provenance)
-- Second retrieval pass threshold — defined
-  the 0.1 reranker confidence floor below
-  which retrieval reruns rather than generating
-  from a low-confidence candidate set
+- §-boundary chunking — one § per chunk, never split a legal condition
+  across nodes; regex patterns and overflow-split logic for §§ exceeding
+  token limits
+- § metadata priority system — explicitly named §§ bypass cosine
+  similarity and surface first
+- LLM query expansion — English → German legal terms before embedding;
+  deterministic XL_TERMS fallback for model-echo failure
+- Legal corpus scope — AufenthG, FreizügG/EU, BeschV selected; StAG
+  and AsylG excluded and disclosed
+- On-premise privacy architecture — GDPR, data sovereignty, professional
+  liability rationale before any code was written
+- Conversation memory — 6-turn window balancing follow-up awareness vs
+  context cost
+- Second retrieval pass threshold — 0.1 reranker confidence floor below
+  which retrieval reruns rather than generating from a low-confidence set
+- Model evaluation — tested Mistral NeMo 12B, Qwen 2.5 14B, gpt-oss:20b;
+  defined trade-off criteria (VRAM vs reasoning vs EU model provenance)
 
 **Testing and evaluation:**
 
-Intensive testing and evaluation conducted by
-Arnav, including:
-
-- Independent legal expert scoring (external
-  qualified reviewer, not self-assessed)
-- Per-query evaluation with documented scores
-  (8/10, 7.5/10) across four representative
-  query classes
-- A documented regression from 6/10 to 3.5/10,
-  full root cause analysis, and verified
-  recovery — included in the learning journal
-  as an honest record of failure
-- Iterative system prompt refinement across
-  multiple evaluation rounds until legal
-  accuracy stabilised
-- Three-query regression test suite run after
-  every architectural change
+- Independent legal expert scoring — external qualified reviewer, not
+  self-assessed
+- Per-query evaluation across four representative query classes
+- Documented regression 6/10 → 3.5/10, root cause analysis, verified
+  recovery — in the learning journal
+- Iterative system prompt refinement until scores stabilised
+- Three-query regression test suite after every architectural change
 
 **Code implementation:**
 
-Code generated with
-[Claude Code](https://claude.ai/claude-code),
+Code generated with [Claude Code](https://claude.ai/claude-code),
 Anthropic's AI coding assistant.
 
 ---
 
 ## Disclaimer
 
-Educational project and technical demonstration.
-Outputs have not been verified by qualified legal
-professionals and must not be relied upon for
-real immigration or legal decisions. Always
-consult a qualified immigration lawyer for your
-specific situation.
+Educational project and technical demonstration. Outputs have not been
+verified by qualified legal professionals and must not be relied upon
+for real immigration or legal decisions. Always consult a qualified
+immigration lawyer for your specific situation.
 
 ---
 
 ## Licence
 
 MIT — code only.
-Legal corpus from gesetze-im-internet.de —
-German federal law, public domain.
+Legal corpus from gesetze-im-internet.de — German federal law, public domain.
