@@ -5,15 +5,21 @@ from llama_index.core.schema import TextNode
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.ollama import OllamaEmbedding
 
+import config
+
 print("1. Waking up the AI Models...")
-Settings.llm = Ollama(model="mistral-nemo:12b", request_timeout=120.0, additional_kwargs={"num_ctx": 16384})
+Settings.llm = Ollama(
+    model=config.BUILD_LLM_MODEL,
+    request_timeout=config.BUILD_LLM_TIMEOUT,
+    additional_kwargs={"num_ctx": config.BUILD_LLM_NUM_CTX},
+)
 Settings.embed_model = OllamaEmbedding(
-    model_name="nomic-embed-text-v2-moe",
+    model_name=config.EMBED_MODEL,
     text_instruction="search_document: ",
     query_instruction="search_query: ",
 )
 
-PERSIST_DIR = "./data_vector_store"
+PERSIST_DIR = config.PERSIST_DIR
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 # AufenthG uses ### for §§; FreizügG/EU and BeschV use ## for §§.
@@ -140,7 +146,7 @@ def overflow_split(block: str) -> list:
 
 if not os.path.exists(PERSIST_DIR):
     print("2. Reading the structured Markdown files from 'data_output'...")
-    documents = SimpleDirectoryReader(input_dir="data_output").load_data()
+    documents = SimpleDirectoryReader(input_dir=config.DATA_OUTPUT_DIR).load_data()
 
     print("3. Splitting on § headers, filtering noise, tagging metadata...")
     nodes = []
