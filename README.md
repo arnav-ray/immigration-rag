@@ -1,9 +1,8 @@
 # 🇩🇪 German Immigration Law RAG
 
-> ⚠️ **Learning project — built and documented in public.**
-> Not a finished product. Active learning exercise in AI engineering,
-> shared openly so others can follow the same path.
-> Expect rough edges. Feedback welcome.
+> **Built in public.** Architecture, product decisions, legal corpus scope, and evaluation methodology by Arnav Ray.
+> Code execution accelerated with Claude Code (Anthropic).
+> Every decision, regression, and fix documented openly — so the methodology is reproducible.
 
 An on-premise AI assistant for German immigration law — built for
 privacy, built for control, and built to explore what autonomous legal
@@ -435,9 +434,24 @@ touch.
 
 ## 🛠️ Development process
 
-**System architecture and product decisions:**
+**Methodology — AI-native development:**
 
-Arnav designed the core architecture and product strategy:
+This project follows the same workflow used across all work at
+[arnavray.ca](https://arnavray.ca): **Frame → Build → Launch.**
+
+- **Frame:** define the problem, the constraints, the legal corpus
+  scope, the privacy requirements, and the success criteria — before
+  writing a single line
+- **Build:** AI-accelerated code execution via
+  [Claude Code](https://claude.ai/claude-code) (Anthropic)
+- **Launch:** ship, evaluate against real criteria, iterate
+
+The idea, the architecture, the product decisions, and the
+constraints are Arnav's. AI handles execution speed. This is the
+same division of responsibility described in the
+[GitHub profile](https://github.com/arnav-ray).
+
+**System architecture and product decisions:**
 
 - Two-pass RAG pipeline (retrieve → rerank → generate) — the key
   architectural decision that separates answer quality from naive
@@ -469,11 +483,6 @@ Arnav designed the core architecture and product strategy:
   recovery — in the learning journal
 - Iterative system prompt refinement until scores stabilised
 - Three-query regression test suite after every architectural change
-
-**Code implementation:**
-
-Code generated with [Claude Code](https://claude.ai/claude-code),
-Anthropic's AI coding assistant.
 
 ---
 
