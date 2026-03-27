@@ -1,6 +1,6 @@
 # 🇩🇪 German Immigration Law RAG
 
-> **Built in public.** Architecture, product decisions, legal corpus scope, and evaluation methodology by Arnav Ray.
+> **Built in public.** Architecture, product decisions, legal corpus scope, and evaluation methodology by Arnav Amal Ray.
 > Code execution accelerated with Claude Code (Anthropic).
 > Every decision, regression, and fix documented openly — so the methodology is reproducible.
 
