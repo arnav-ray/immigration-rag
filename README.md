@@ -488,5 +488,8 @@ immigration lawyer for your specific situation.
 
 ## Licence
 
-MIT — code only.
+Apache License 2.0 — code only.
+See [LICENSE](LICENSE) for the full licence text.
+
 Legal corpus from gesetze-im-internet.de — German federal law, public domain.
+The legal documents themselves are not covered by this licence.
